@@ -1,0 +1,30 @@
+services:
+  llama-cpp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      pull: true
+    image: llama-cpp:local
+    container_name: llama-cpp
+    entrypoint: ["/bin/zsh", "-c"]
+    command: ["while true; do sleep 3600; done"]
+    stdin_open: true
+    tty: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HF_HOME=/models
+      - HF_HUB_CACHE=/models/hf-cache
+      - HUGGINGFACE_HUB_CACHE=/models/hf-cache
+    volumes:
+      - ./models:/models
+      # External model directories (LM Studio, etc.) - mounted read-only
+      - ${HOME}/.lmstudio/models:/external/lmstudio:ro
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

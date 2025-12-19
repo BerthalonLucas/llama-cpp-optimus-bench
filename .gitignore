@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Streamlit
+.streamlit/
+
+# Runtime artifacts - large files
+models/
+runs/
+
+# Hugging Face caches
+.cache/
+hf-cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# llama-optimus submodule (if you want to keep it separate)
+# llama-optimus/
+llama-optimus/
+llama-optimus/
