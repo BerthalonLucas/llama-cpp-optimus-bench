@@ -9,10 +9,24 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import time
+import warnings
 from pathlib import Path
+
+# Disable Optuna's verbose logging BEFORE importing optuna
+os.environ["OPTUNA_VERBOSITY"] = "WARNING"
+logging.getLogger("optuna").setLevel(logging.WARNING)
+
+# Suppress all optuna warnings (ExperimentalWarning etc)
+warnings.filterwarnings("ignore", module="optuna")
+
+# Also suppress the specific loggers
+for logger_name in ["optuna", "optuna.study", "optuna.trial", "optuna.samplers"]:
+    logging.getLogger(logger_name).setLevel(logging.WARNING)
+    logging.getLogger(logger_name).propagate = False
 
 # Add streamlit_dashboard to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -20,6 +34,52 @@ sys.path.insert(0, str(Path(__file__).parent))
 from streamlit_dashboard.core.paths import RepoPaths
 from streamlit_dashboard.core.settings import AppSettings
 from streamlit_dashboard.core.gguf_meta import read_gguf_meta_fast
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Terminal compatibility - detect if we can use fancy output
+# ─────────────────────────────────────────────────────────────────────────────
+def supports_unicode() -> bool:
+    """Check if terminal supports unicode/emojis"""
+    try:
+        # Check if stdout is a tty and supports unicode
+        if not sys.stdout.isatty():
+            return False
+        # Check encoding
+        encoding = sys.stdout.encoding or 'ascii'
+        return encoding.lower() in ('utf-8', 'utf8')
+    except Exception:
+        return False
+
+def supports_color() -> bool:
+    """Check if terminal supports colors"""
+    # Check for NO_COLOR env var (standard)
+    if os.environ.get('NO_COLOR'):
+        return False
+    # Check for TERM
+    term = os.environ.get('TERM', '')
+    if term == 'dumb':
+        return False
+    # Check if stdout is a tty
+    return sys.stdout.isatty()
+
+USE_UNICODE = supports_unicode()
+USE_COLOR = supports_color()
+
+# Icons with ASCII fallbacks
+ICONS = {
+    'check': '✓' if USE_UNICODE else '[OK]',
+    'cross': '✗' if USE_UNICODE else '[FAIL]',
+    'star': '★' if USE_UNICODE else '*',
+    'computer': '' if USE_UNICODE else '[HW]',
+    'package': '' if USE_UNICODE else '[MODEL]',
+    'gear': '' if USE_UNICODE else '[CFG]',
+    'rocket': '' if USE_UNICODE else '[START]',
+    'trophy': '' if USE_UNICODE else '[BEST]',
+    'clock': '' if USE_UNICODE else '[TIME]',
+    'folder': '' if USE_UNICODE else '[DIR]',
+    'warning': '⚠' if USE_UNICODE else '[!]',
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -32,28 +92,32 @@ try:
     from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
     from rich.live import Live
     from rich.text import Text
-    RICH_AVAILABLE = True
+    RICH_AVAILABLE = True and USE_COLOR
 except ImportError:
     RICH_AVAILABLE = False
 
 
 class SimpleConsole:
-    """Fallback console when rich is not available"""
+    """Fallback console when rich is not available or colors disabled"""
     def print(self, *args, **kwargs):
         # Strip rich markup
         text = " ".join(str(a) for a in args)
-        for tag in ["[bold", "[green", "[red", "[yellow", "[blue", "[cyan", "[dim", "[/", "]"]:
-            text = text.replace(tag, "")
+        # Remove rich tags
+        import re
+        text = re.sub(r'\[/?[a-z_ ]+\]', '', text)
         print(text)
     
     def rule(self, title=""):
-        print(f"\n{'─' * 60}")
+        print(f"\n{'=' * 70}")
         if title:
-            print(f"  {title}")
-        print(f"{'─' * 60}\n")
+            # Strip rich markup from title
+            import re
+            clean_title = re.sub(r'\[/?[a-z_ ]+\]', '', title)
+            print(f"  {clean_title}")
+        print(f"{'=' * 70}\n")
 
 
-console = Console() if RICH_AVAILABLE else SimpleConsole()
+console = Console(force_terminal=USE_COLOR) if RICH_AVAILABLE else SimpleConsole()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -104,13 +168,13 @@ def detect_hardware() -> dict:
 
 def print_hardware_info(hw: dict):
     """Display hardware information"""
-    console.print("\n[bold cyan]🖥️  Hardware Detected[/bold cyan]")
+    console.print(f"\n[bold cyan]{ICONS['computer']}  Hardware Detected[/bold cyan]")
     console.print(f"  CPU: {hw['cpu_cores']} cores")
     if hw["gpu_available"]:
         vram_gb = hw["gpu_vram_mb"] / 1024 if hw["gpu_vram_mb"] else 0
         console.print(f"  GPU: [green]{hw['gpu_name']}[/green] ({vram_gb:.1f} GB VRAM)")
     else:
-        console.print("  GPU: [yellow]Not detected (CPU-only mode)[/yellow]")
+        console.print(f"  GPU: [yellow]Not detected (CPU-only mode)[/yellow]")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,10 +187,19 @@ def cmd_optimize(args):
     # Resolve model path
     model_path = Path(args.model)
     if not model_path.is_absolute():
-        model_path = Path.cwd() / "models" / args.model
+        # Try relative to cwd first, then models/
+        if model_path.exists():
+            model_path = model_path.resolve()
+        elif (Path.cwd() / "models" / args.model).exists():
+            model_path = (Path.cwd() / "models" / args.model).resolve()
+        elif (Path.cwd() / args.model).exists():
+            model_path = (Path.cwd() / args.model).resolve()
+        else:
+            model_path = Path.cwd() / "models" / args.model
     
     if not model_path.exists():
-        console.print(f"[red]❌ Model not found: {model_path}[/red]")
+        console.print(f"[red]{ICONS['cross']} Model not found: {model_path}[/red]")
+        console.print(f"[dim]  Tried: {args.model}, models/{args.model}[/dim]")
         sys.exit(1)
     
     # Detect hardware
@@ -134,7 +207,7 @@ def cmd_optimize(args):
     print_hardware_info(hw)
     
     # Read model metadata
-    console.print(f"\n[bold cyan]📦 Model[/bold cyan]: {model_path.name}")
+    console.print(f"\n[bold cyan]{ICONS['package']} Model[/bold cyan]: {model_path.name}")
     try:
         meta = read_gguf_meta_fast(model_path)
         model_ctx = meta.context_length or 32768
@@ -148,13 +221,14 @@ def cmd_optimize(args):
     
     # Determine optimization mode
     if not hw["gpu_available"]:
-        console.print("\n[yellow]⚠️  No GPU detected - using CPU-only optimization[/yellow]")
+        console.print(f"\n[yellow]{ICONS['warning']}  No GPU detected - using CPU-only optimization[/yellow]")
         ngl_default = 0
     else:
         ngl_default = 999
     
     # Setup paths
-    paths = RepoPaths()
+    paths = RepoPaths.detect()
+    paths.ensure_dirs()
     settings = AppSettings()
     
     # Configure optimization
@@ -166,18 +240,10 @@ def cmd_optimize(args):
     }
     p = presets.get(preset, presets["fast"])
     
-    # Context range based on VRAM
-    if hw["gpu_vram_mb"] >= 24000:
-        ctx_max = min(model_ctx, 65536)
-    elif hw["gpu_vram_mb"] >= 16000:
-        ctx_max = min(model_ctx, 32768)
-    elif hw["gpu_vram_mb"] >= 8000:
-        ctx_max = min(model_ctx, 16384)
-    else:
-        ctx_max = min(model_ctx, 8192)
-    
+    # Context range: use model's full context capacity
+    # Let the optimization find what works - OOM configs will be pruned automatically
     ctx_min = args.ctx_min or 2048
-    ctx_max = args.ctx_max or ctx_max
+    ctx_max = args.ctx_max or model_ctx  # Use model's max context directly
     
     cfg = HyperOptConfig(
         model_path_host=model_path,
@@ -197,11 +263,10 @@ def cmd_optimize(args):
         weight_ctx=args.weight_ctx or 0.2,
     )
     
-    console.print(f"\n[bold cyan]⚙️  Optimization Settings ({preset})[/bold cyan]")
+    console.print(f"\n[bold cyan]{ICONS['gear']}  Optimization Settings ({preset})[/bold cyan]")
     console.print(f"  Trials: {cfg.trials}")
     console.print(f"  Context: {cfg.ctx_range[0]:,} - {cfg.ctx_range[1]:,} (step {cfg.ctx_range[2]})")
     console.print(f"  Batch: {cfg.batch_range[0]} - {cfg.batch_range[1]}")
-    console.print(f"  Weights: TG={cfg.weight_tg} PP={cfg.weight_pp} CTX={cfg.weight_ctx}")
     
     console.rule("[bold green]Starting Optimization[/bold green]")
     
@@ -230,14 +295,14 @@ def cmd_optimize(args):
                 tg = tg_part[0].split("=")[1].replace("t/s", "").strip() if tg_part else "?"
                 pp = pp_part[0].split("=")[1].replace("t/s", "").strip() if pp_part else "?"
                 
-                console.print(f"  [green]✓[/green] Trial {trial_count:3d}/{cfg.trials} │ score={score:6.1f} │ ctx={ctx:>6} │ TG={tg:>6} │ PP={pp:>6}")
+                console.print(f"  [green]{ICONS['check']}[/green] Trial {trial_count:3d}/{cfg.trials} | score={score:6.1f} | ctx={ctx:>6} | TG={tg:>6} | PP={pp:>6}")
             else:
                 # Failed trial
                 error = msg.split("-")[-1].strip() if "-" in msg else "error"
-                console.print(f"  [red]✗[/red] Trial {trial_count:3d}/{cfg.trials} │ {error[:50]}")
+                console.print(f"  [red]{ICONS['cross']}[/red] Trial {trial_count:3d}/{cfg.trials} | {error[:50]}")
         
         elif "NEW BEST" in msg:
-            console.print(f"  [bold yellow]★ {msg.split(']')[-1].strip()}[/bold yellow]")
+            console.print(f"  [bold yellow]{ICONS['star']} {msg.split(']')[-1].strip()}[/bold yellow]")
         
         elif "🚀" in msg or "📊" in msg or "🎯" in msg or "⚖️" in msg:
             # Config info - skip, we already showed it
@@ -260,7 +325,7 @@ def cmd_optimize(args):
             log_fn=log_fn,
         )
     except KeyboardInterrupt:
-        console.print("\n[yellow]⚠️  Optimization interrupted by user[/yellow]")
+        console.print(f"\n[yellow]{ICONS['warning']}  Optimization interrupted by user[/yellow]")
         sys.exit(130)
     
     elapsed = time.time() - start_time
@@ -268,11 +333,11 @@ def cmd_optimize(args):
     # Display results
     console.rule("[bold green]Optimization Complete[/bold green]")
     
-    console.print(f"\n⏱️  Duration: {elapsed/60:.1f} minutes")
-    console.print(f"📁 Results saved to: {run_dir}")
+    console.print(f"\n{ICONS['clock']}  Duration: {elapsed/60:.1f} minutes")
+    console.print(f"{ICONS['folder']} Results saved to: {run_dir}")
     
     if best:
-        console.print("\n[bold green]🏆 Best Configuration Found:[/bold green]")
+        console.print(f"\n[bold green]{ICONS['trophy']} Best Configuration Found:[/bold green]")
         console.print(f"  Score: [bold]{best.score:.2f}[/bold]")
         console.print(f"  Context: {best.ctx_tokens:,} tokens")
         
@@ -280,7 +345,7 @@ def cmd_optimize(args):
         pp = best.metrics.get("pp", 0)
         console.print(f"  TG: {tg:.1f} t/s | PP: {pp:.1f} t/s")
         
-        console.print("\n[bold cyan]📋 Recommended llama-server command:[/bold cyan]")
+        console.print(f"\n[bold cyan]Recommended llama-server command:[/bold cyan]")
         cmd_parts = [
             "./llama.sh server",
             f"--model {model_path.name}",
@@ -297,7 +362,7 @@ def cmd_optimize(args):
         
         console.print(f"\n  [green]{' '.join(cmd_parts)}[/green]")
     else:
-        console.print("\n[red]❌ No successful trials found[/red]")
+        console.print(f"\n[red]{ICONS['cross']} No successful trials found[/red]")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -310,7 +375,7 @@ def cmd_dashboard(args):
     port = args.port or 8510
     host = args.host or "0.0.0.0"
     
-    console.print(f"\n[bold cyan]🚀 Launching Dashboard[/bold cyan]")
+    console.print(f"\n[bold cyan]{ICONS['rocket']} Launching Dashboard[/bold cyan]")
     console.print(f"  URL: http://localhost:{port}")
     console.print(f"  Host: {host}")
     console.print("\n  Press Ctrl+C to stop\n")

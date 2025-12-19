@@ -16,85 +16,133 @@ Dashboard Streamlit pour benchmarker et optimiser automatiquement les paramètre
 - **📈 Historique** : Visualisation et comparaison des runs
 - **🖥️ Multi-hardware** : Détection automatique GPU/CPU
 
-## 🚀 Quickstart (2 commandes!)
+## 🚀 Quickstart
 
 ```bash
-# 1. Setup
+# 1. Cloner et setup (une seule fois)
 git clone https://github.com/BerthalonLucas/llama-cpp-optimus-bench.git
 cd llama-cpp-optimus-bench
-python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements_dashboard.txt
-docker compose build --pull llama-cpp
+./llama.sh setup
 
-# 2. Optimiser un modèle
-./llama.sh optimize models/my-model.gguf --preset fast
+# 2. Placer un modèle GGUF dans models/
+cp /path/to/model.gguf models/
+
+# 3. Optimiser !
+./llama.sh optimize model.gguf --preset fast
 ```
 
-## 🎯 Utilisation
+## 📦 Prérequis
 
-### Option 1: Interface Web (Dashboard)
+- **Python 3.10+**
+- **Docker** + docker compose plugin
+- **GPU NVIDIA** + nvidia-container-toolkit *(recommandé, CPU aussi supporté)*
+
+### Vérifier Docker
 
 ```bash
-./llama.sh dashboard
+docker --version          # Docker version 24.0+
+docker compose version    # Docker Compose version v2.0+
 ```
 
-Ouvre `http://localhost:8510` dans votre navigateur.
-
-### Option 2: Ligne de commande
+### Vérifier GPU (optionnel)
 
 ```bash
-# Optimisation rapide (~5 min)
-./llama.sh optimize models/my-model.gguf --preset fast
-
-# Optimisation complète (~30 min)
-./llama.sh optimize models/my-model.gguf --preset mid
-
-# Optimisation approfondie (~1-2h)
-./llama.sh optimize models/my-model.gguf --preset high
+nvidia-smi               # Doit afficher votre GPU
 ```
 
-### Option 3: Opérations Docker directes
+## 🔧 Installation
+
+### Option 1 : Setup automatique (recommandé)
 
 ```bash
-./llama.sh server --model models/my-model.gguf -ngl 99 -c 16384
-./llama.sh bench --model /models/my-model.gguf
-./llama.sh shell
+git clone https://github.com/BerthalonLucas/llama-cpp-optimus-bench.git
+cd llama-cpp-optimus-bench
+./llama.sh setup
 ```
 
-## 📦 Installation complète
+Cette commande :
+- ✅ Crée les dossiers `models/` et `runs/`
+- ✅ Crée l'environnement Python `.venv/`
+- ✅ Installe les dépendances
+- ✅ Build l'image Docker llama.cpp
 
-### Prérequis
-
-- Python 3.10+
-- Docker + docker compose
-- GPU NVIDIA + nvidia-container-toolkit (recommandé, CPU aussi supporté)
-
-### Setup
+### Option 2 : Installation manuelle
 
 ```bash
-# Cloner le repo
+# Cloner
 git clone https://github.com/BerthalonLucas/llama-cpp-optimus-bench.git
 cd llama-cpp-optimus-bench
 
-# Créer l'environnement virtuel
+# Créer les dossiers
+mkdir -p models models/hf-cache runs
+
+# Python venv
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install -r requirements_dashboard.txt
 
-# Build du conteneur llama.cpp
+# Docker
 docker compose build --pull llama-cpp
 ```
 
 ### Variables d'environnement (optionnel)
 
 ```bash
-export HF_TOKEN="..."  # Pour modèles Hugging Face privés
+# Pour télécharger des modèles privés depuis Hugging Face
+export HF_TOKEN="hf_xxx..."
 ```
 
-## 🔧 Commandes llama.sh
+## 🎯 Utilisation
+
+### Commande `setup` - Installation initiale
+
+```bash
+./llama.sh setup
+```
+
+### Commande `dashboard` - Interface Web
+
+```bash
+./llama.sh dashboard [--port 8510] [--host 0.0.0.0]
+```
+
+Ouvre `http://localhost:8510` dans votre navigateur.
+
+### Commande `optimize` - Optimisation CLI
+
+```bash
+# Optimisation rapide (~5 min, 20 trials)
+./llama.sh optimize my-model.gguf --preset fast
+
+# Optimisation équilibrée (~30 min, 50 trials)
+./llama.sh optimize my-model.gguf --preset mid
+
+# Optimisation approfondie (~1-2h, 100 trials)
+./llama.sh optimize my-model.gguf --preset high
+
+# Options avancées
+./llama.sh optimize my-model.gguf --trials 30 --ctx-max 16384 --ctx-min 4096
+```
+
+### Commandes Docker
+
+```bash
+# Lancer un serveur avec config optimisée
+./llama.sh server --model models/my-model.gguf -ngl 99 -c 16384 --flash-attn
+
+# Benchmark manuel
+./llama.sh bench --model /models/my-model.gguf -ngl 99 -p 512 -n 128
+
+# Shell interactif
+./llama.sh shell
+```
+
+## 📋 Référence des commandes
 
 | Commande | Description |
 |----------|-------------|
+| `./llama.sh setup` | Installation initiale (venv, deps, docker) |
 | `./llama.sh dashboard` | Lance le dashboard web (port 8510) |
 | `./llama.sh optimize <model>` | Optimisation HyperOptimus en CLI |
 | `./llama.sh server [args]` | Lance llama-server |
@@ -103,17 +151,15 @@ export HF_TOKEN="..."  # Pour modèles Hugging Face privés
 
 ### Options de `optimize`
 
-```bash
-./llama.sh optimize <model> [options]
-
-Options:
-  --preset fast|mid|high    Intensité (default: fast)
-  --trials N                Nombre d'essais
-  --ctx-max N               Contexte maximum
-  --ctx-min N               Contexte minimum
-  --weight-tg F             Poids TG (default: 0.5)
-  --weight-pp F             Poids PP (default: 0.3)
-```
+| Option | Description | Défaut |
+|--------|-------------|--------|
+| `--preset` | Intensité : `fast`, `mid`, `high` | `fast` |
+| `--trials` | Nombre d'essais Optuna | selon preset |
+| `--ctx-min` | Contexte minimum | 2048 |
+| `--ctx-max` | Contexte maximum | auto (selon VRAM) |
+| `--weight-tg` | Poids Text Generation | 0.5 |
+| `--weight-pp` | Poids Prompt Processing | 0.3 |
+| `--weight-ctx` | Poids Context bonus | 0.2 |
 
 ## 🤖 HyperOptimus
 
@@ -128,7 +174,7 @@ L'optimiseur automatique utilise **Optuna** avec l'algorithme TPE pour trouver l
 | `flash_attn` | 0/1 | Flash Attention |
 | `ngl` | 0-999 | Couches GPU |
 
-### Score combiné
+### Scoring
 
 ```
 score = α × TG + β × PP_normalized + γ × CTX_bonus
@@ -137,34 +183,75 @@ PP_normalized = PP × (ctx^0.4 / 1000)
 CTX_bonus = log2(ctx/1000) × 20
 ```
 
+- **TG** : vitesse de génération (tokens/s)
+- **PP** : vitesse de traitement du prompt (tokens/s)
+- **CTX** : bonus pour les grands contextes
+
 ## 📁 Structure du projet
 
 ```
-├── cli.py                    # CLI HyperOptimus
-├── llama.sh                  # Script principal
-├── streamlit_dashboard/
-│   ├── streamlit_app.py      # Dashboard web
-│   ├── core/                 # Logique métier
-│   │   ├── hyperoptimus.py   # Optimisation Optuna
-│   │   └── ...
-│   └── pages/                # Pages Streamlit
-├── compose.yml               # Docker Compose
-├── models/                   # Modèles GGUF (gitignored)
-└── runs/                     # Historique (gitignored)
+llama-cpp-optimus-bench/
+├── llama.sh                  # 🔧 Script principal (point d'entrée)
+├── cli.py                    # 🖥️ CLI Python pour HyperOptimus
+├── compose.yml               # 🐳 Docker Compose config
+├── Dockerfile                # 🐳 Image llama.cpp + CUDA
+├── requirements_dashboard.txt
+│
+├── models/                   # 📦 Vos modèles GGUF (gitignored)
+│   └── hf-cache/             # Cache Hugging Face
+│
+├── runs/                     # 📊 Historique des runs (gitignored)
+│   ├── bench/
+│   ├── hyperoptimus/
+│   └── sweeps/
+│
+└── streamlit_dashboard/      # 🌐 Application web
+    ├── streamlit_app.py      # Point d'entrée Streamlit
+    ├── core/                 # Logique métier
+    │   ├── hyperoptimus.py   # Optimisation Optuna
+    │   ├── bench.py          # Exécution llama-bench
+    │   └── ...
+    ├── pages/                # Pages Streamlit
+    └── ui/                   # Composants UI
 ```
 
 ## 📝 Formats Hugging Face
 
-Le dashboard accepte plusieurs formats :
+Pour télécharger des modèles depuis le dashboard :
 
-- `hf.co/<org>/<repo>:<quant>` 
-- `<org>/<repo>:<quant>`
-- `<org>/<repo>` (sélection manuelle du fichier)
+| Format | Exemple |
+|--------|---------|
+| `hf.co/<org>/<repo>:<quant>` | `hf.co/unsloth/Qwen3-0.6B-GGUF:Q4_K_M` |
+| `<org>/<repo>:<quant>` | `TheBloke/Mistral-7B-GGUF:Q5_K_M` |
+| `<org>/<repo>` | `unsloth/Qwen3-0.6B-GGUF` (sélection manuelle) |
 
-Exemples :
+## 🐛 Dépannage
+
+### "Model not found"
+
+```bash
+# Le modèle doit être dans models/
+ls models/
+# ou spécifier le chemin complet
+./llama.sh optimize /chemin/absolu/model.gguf
 ```
-unsloth/Ministral-8B-Instruct-2410-GGUF:Q4_K_M
-TheBloke/Mistral-7B-Instruct-v0.2-GGUF:Q5_K_M
+
+### Docker build échoue
+
+```bash
+# Vérifier que Docker fonctionne
+docker run hello-world
+
+# Rebuild avec logs
+docker compose build --pull --no-cache llama-cpp
+```
+
+### GPU non détecté
+
+```bash
+# Vérifier nvidia-container-toolkit
+nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
 ```
 
 ## 📄 License

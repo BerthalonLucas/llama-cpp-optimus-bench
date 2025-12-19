@@ -3,9 +3,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import math
+import os
 import subprocess
 import time
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -14,9 +17,21 @@ import threading
 import queue
 from datetime import datetime
 
+# Suppress Optuna logging when running in CLI mode
+if os.environ.get("OPTUNA_VERBOSITY") == "WARNING":
+    logging.getLogger("optuna").setLevel(logging.WARNING)
+    for _logger_name in ["optuna", "optuna.study", "optuna.trial", "optuna.samplers"]:
+        logging.getLogger(_logger_name).setLevel(logging.WARNING)
+        logging.getLogger(_logger_name).propagate = False
+    # Also suppress experimental warnings
+    warnings.filterwarnings("ignore", category=UserWarning, module="optuna")
+
 try:
     import optuna
     from optuna.samplers import TPESampler
+    # Also set it after import
+    if os.environ.get("OPTUNA_VERBOSITY") == "WARNING":
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
 except Exception as _e:
     optuna = None
     TPESampler = None

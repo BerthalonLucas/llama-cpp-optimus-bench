@@ -20,6 +20,9 @@ usage() {
   cat <<'EOF'
 Usage: ./llama.sh <command> [options]
 
+SETUP:
+  setup                            First-time setup (venv, deps, docker, dirs)
+
 QUICK START COMMANDS:
   dashboard                        Launch Streamlit dashboard (web UI)
   optimize <model> [--preset P]    Run HyperOptimus optimization (CLI)
@@ -34,6 +37,9 @@ LEGACY PRESETS:
   moe-scan <model>                 Sweep -ncmoe values for MoE models
 
 EXAMPLES:
+  # First time setup
+  ./llama.sh setup
+
   # Launch web dashboard
   ./llama.sh dashboard
 
@@ -51,6 +57,57 @@ OPTIONS for 'optimize':
 
 For full documentation: https://github.com/BerthalonLucas/llama-cpp-optimus-bench
 EOF
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Setup command - First time installation
+# ─────────────────────────────────────────────────────────────────────────────
+run_setup() {
+  echo -e "${CYAN}${BOLD}🔧 llama-cpp-optimus-bench Setup${NC}"
+  echo ""
+  
+  # 1. Create directories
+  echo -e "${BLUE}[1/4]${NC} Creating directories..."
+  mkdir -p "$SCRIPT_DIR/models"
+  mkdir -p "$SCRIPT_DIR/models/hf-cache"
+  mkdir -p "$SCRIPT_DIR/runs"
+  echo -e "  ${GREEN}✓${NC} models/"
+  echo -e "  ${GREEN}✓${NC} models/hf-cache/"
+  echo -e "  ${GREEN}✓${NC} runs/"
+  
+  # 2. Create/update virtual environment
+  echo -e "${BLUE}[2/4]${NC} Setting up Python virtual environment..."
+  if [[ ! -d "$SCRIPT_DIR/.venv" ]]; then
+    python3 -m venv "$SCRIPT_DIR/.venv"
+    echo -e "  ${GREEN}✓${NC} Created .venv/"
+  else
+    echo -e "  ${GREEN}✓${NC} .venv/ already exists"
+  fi
+  
+  # 3. Install dependencies
+  echo -e "${BLUE}[3/4]${NC} Installing Python dependencies..."
+  source "$SCRIPT_DIR/.venv/bin/activate"
+  pip install -U pip -q
+  pip install -r "$SCRIPT_DIR/requirements_dashboard.txt" -q
+  echo -e "  ${GREEN}✓${NC} Dependencies installed"
+  
+  # 4. Build Docker image
+  echo -e "${BLUE}[4/4]${NC} Building Docker image (this may take a few minutes)..."
+  if docker compose build --pull llama-cpp 2>&1 | tail -5; then
+    echo -e "  ${GREEN}✓${NC} Docker image built"
+  else
+    echo -e "  ${YELLOW}⚠${NC} Docker build failed - you can retry with: docker compose build --pull llama-cpp"
+  fi
+  
+  echo ""
+  echo -e "${GREEN}${BOLD}✅ Setup complete!${NC}"
+  echo ""
+  echo -e "Next steps:"
+  echo -e "  1. Place your GGUF models in ${CYAN}./models/${NC}"
+  echo -e "  2. Run ${CYAN}./llama.sh dashboard${NC} to launch the web UI"
+  echo -e "  3. Or run ${CYAN}./llama.sh optimize <model.gguf>${NC} from CLI"
+  echo ""
+  echo -e "Optional: Set ${YELLOW}HF_TOKEN${NC} env var for private Hugging Face models"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -545,6 +602,9 @@ fi
 shift || true
 
 	case "$cmd" in
+  setup)
+    run_setup
+    ;;
   dashboard)
     run_dashboard "$@"
     ;;
