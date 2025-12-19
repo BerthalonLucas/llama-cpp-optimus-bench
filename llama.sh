@@ -7,29 +7,105 @@ cd "$SCRIPT_DIR"
 SERVICE="llama-cpp"
 LLAMA_BIN_DIR="${LLAMA_BIN_DIR:-/app}"
 
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
 usage() {
   cat <<'EOF'
-Usage: ./llama.sh {server|bench|shell|optimus-fast|optimus-mid|optimus-high|moe-scan} [...]
-  server [args...]                 Run llama-server and publish its port on the host.
-                                  - Default: publish 8080:8080
-                                  - If you pass `--port N` to llama-server, the script publishes N:N.
-                                  - You can override the host port without changing the server port via
-                                    `LLAMA_SERVER_HOST_PORT=<host_port> ./llama.sh server ...`
-  bench [args...]                  Run llama-bench with optional args.
-  shell [args...]                  Open an interactive shell inside the image.
-  optimus-fast  <model>|-hf <repo> [--hf-file file] [args...]  Quick preset: ~10-15 min smoke.
-  optimus-mid   <model>|-hf <repo> [--hf-file file] [args...]  Balanced preset: ~30-60 min.
-  optimus-high  <model>|-hf <repo> [--hf-file file] [args...]  Thorough preset: 1-3h deep search.
-  moe-scan <model>|-hf <repo> [--hf-file file] [--ncmoe-values "0 5 10"] [--ngl 99] [-p 512] [-n 128] [-r 2] [-- ...bench args]
+Usage: ./llama.sh <command> [options]
 
-Examples:
-  ./llama.sh server --model /models/mistral.gguf
-  ./llama.sh server --model /models/mistral.gguf --port 8510
-  LLAMA_SERVER_HOST_PORT=8510 ./llama.sh server --model /models/mistral.gguf   # keep server port=8080
-  ./llama.sh optimus-fast my-model.gguf --metric tg
-  ./llama.sh optimus-mid -hf TheBloke/Mixtral-8x7B-GGUF --hf-file mixtral-8x7b.Q4_K_M.gguf
-  ./llama.sh moe-sweep mixtral-8x7b.Q4_K_M.gguf --ncmoe-values "0 5 10 15 20 25 30" --ngl 99 -- -fa 1
+QUICK START COMMANDS:
+  dashboard                        Launch Streamlit dashboard (web UI)
+  optimize <model> [--preset P]    Run HyperOptimus optimization (CLI)
+  
+LLAMA.CPP COMMANDS:
+  server [args...]                 Run llama-server
+  bench [args...]                  Run llama-bench
+  shell [args...]                  Interactive shell in container
+
+LEGACY PRESETS:
+  optimus-fast|mid|high <model>    Run llama-optimus (old optimizer)
+  moe-scan <model>                 Sweep -ncmoe values for MoE models
+
+EXAMPLES:
+  # Launch web dashboard
+  ./llama.sh dashboard
+
+  # Optimize a model (fastest way)
+  ./llama.sh optimize my-model.gguf --preset fast
+
+  # Run server with optimized config
+  ./llama.sh server --model models/my-model.gguf -ngl 99 -c 16384
+
+OPTIONS for 'optimize':
+  --preset fast|mid|high    Optimization intensity (default: fast)
+  --trials N                Number of trials
+  --ctx-max N               Maximum context size
+  --help                    Show all options
+
+For full documentation: https://github.com/BerthalonLucas/llama-cpp-optimus-bench
 EOF
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard command
+# ─────────────────────────────────────────────────────────────────────────────
+run_dashboard() {
+  local port="${DASHBOARD_PORT:-8510}"
+  local host="${DASHBOARD_HOST:-0.0.0.0}"
+  
+  # Parse args
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port|-p)
+        port="${2:-8510}"
+        shift 2
+        ;;
+      --host|-h)
+        host="${2:-0.0.0.0}"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  
+  echo -e "${CYAN}${BOLD}🚀 Launching Dashboard${NC}"
+  echo -e "   URL: ${GREEN}http://localhost:${port}${NC}"
+  echo -e "   Host: ${host}"
+  echo ""
+  echo -e "   Press ${YELLOW}Ctrl+C${NC} to stop"
+  echo ""
+  
+  # Activate venv if exists
+  if [[ -f "$SCRIPT_DIR/.venv/bin/activate" ]]; then
+    source "$SCRIPT_DIR/.venv/bin/activate"
+  fi
+  
+  exec python3 -m streamlit run \
+    "$SCRIPT_DIR/streamlit_dashboard/streamlit_app.py" \
+    --server.port "$port" \
+    --server.address "$host" \
+    --server.headless true
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Optimize command (HyperOptimus CLI)
+# ─────────────────────────────────────────────────────────────────────────────
+run_optimize() {
+  # Activate venv if exists
+  if [[ -f "$SCRIPT_DIR/.venv/bin/activate" ]]; then
+    source "$SCRIPT_DIR/.venv/bin/activate"
+  fi
+  
+  exec python3 "$SCRIPT_DIR/cli.py" optimize "$@"
 }
 
 validate_port() {
@@ -469,6 +545,17 @@ fi
 shift || true
 
 	case "$cmd" in
+  dashboard)
+    run_dashboard "$@"
+    ;;
+  optimize)
+    if [[ $# -lt 1 ]]; then
+      echo -e "${RED}Model path is required for optimize${NC}" >&2
+      echo "Usage: ./llama.sh optimize <model> [--preset fast|mid|high]"
+      exit 1
+    fi
+    run_optimize "$@"
+    ;;
   server)
 	    ensure_image
 	    # Publish port dynamically:
